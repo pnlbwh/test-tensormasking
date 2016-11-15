@@ -1,7 +1,0 @@
-b0MaxBVal = 50
-b0Dist = 45
-echoSpacing = 0.20
-# PA or RL
-phaseEncoding = PA
-numDwiPairs = 2
-caselist = BIO_0001

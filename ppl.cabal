@@ -14,7 +14,7 @@ build-type:          Simple
 cabal-version:       >=1.10
 
 executable ppl
-  hs-source-dirs:      pipeline-lib, pipeline-paths, config
+  hs-source-dirs:      pipeline-lib, config-input-paths, config-output-paths, config
   main-is:             Pipeline.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-I0
   build-depends:       base
@@ -33,4 +33,3 @@ executable ppl
   other-modules:     Shake.BuildKey
                    , Nrrd
                    , FSL
-                   , HCP
