@@ -22,14 +22,16 @@ module FSL
     ,moveDwi
     ,tonii
     ,dwiToNrrd
-
+    ,threshold
+    ,average
     ) where
 
 import           Control.Monad
+import           Data.List                  (intersperse)
 import           Development.Shake
 import           Development.Shake.FilePath
+import qualified System.Directory           as IO
 import           Text.Printf
-import qualified System.Directory as IO
 
 newtype BValue = BValue Int
   deriving (Eq, Ord)
@@ -184,3 +186,15 @@ dwiToNrrd options dwi = do
 
 tonii :: FilePath -> FilePath
 tonii f = replaceExtension f "nii.gz"
+
+threshold :: Float -> FilePath -> FilePath -> Action ()
+threshold thresh nii niiOut =
+  command_ [] "fslmaths" [nii, "-thr", show thresh, niiOut]
+
+average :: FilePath -> [FilePath] -> Action ()
+average out niis =
+  command_ [] "fslmaths" $ [out, "-add"]
+  ++ (intersperse "-add" niis)
+  ++ ["-div", show (length niis)
+     ,"-odt", "short"
+     ,out]

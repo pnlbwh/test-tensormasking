@@ -8,6 +8,7 @@ import           qualified System.Directory         as IO
 -- import           Software.UKFTractography (UKFTractographyExe (..), rules)
 import           AntsPath                 (antsPath, antsSrc)
 import qualified Intrust
+import qualified FSL (threshold, average)
 
 
 type CaseId = String
@@ -15,9 +16,6 @@ type CaseId = String
 data ImageType = Bse | TensorMask
         deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
-data MaskingAlgorithm = NNLSFusion
-                      | MABS
-        deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 newtype TrainingMask = TrainingMask CaseId
         deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
@@ -49,18 +47,24 @@ instance BuildKey TrainingBse where
     unit $ cmd "center.py -i" tmpnrrd "-o" tmpnrrd
     toNii tmpnrrd (path out)
 
+--------------------------------------------------------------------------------
+-- AtlasPair
 
-data AtlasPair = AtlasPair CaseId CaseId
+data ThresholdedMasks = ThresholdedMasks | UnThresholdedMasks
+                 deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
+
+data AtlasPair = AtlasPair ThresholdedMasks CaseId CaseId
         deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 instance BuildKey AtlasPair where
   paths x = [atlasPath Bse x, atlasPath TensorMask x]
     where
-      atlasPath imgtype (AtlasPair caseidT caseid)
+      atlasPath imgtype (AtlasPair thresholded caseidT caseid)
         = outdir </> caseidT
-        </> (intercalate "-" [show imgtype, caseid, "in", caseidT]) <.> "nii.gz"
+        </> (intercalate "-" [show imgtype, show thresholded, caseid, "in", caseidT])
+        <.> "nii.gz"
 
-  build out@(AtlasPair caseidT caseid) = Just $ withTempDir $ \tmpdir -> do
+  build out@(AtlasPair UnThresholdedMasks caseidT caseid) = Just $ withTempDir $ \tmpdir -> do
     let bse = TrainingBse caseid
         bseT = TrainingBse caseidT
     apply1 (TrainingMask caseid) :: Action [Double]
@@ -90,20 +94,54 @@ instance BuildKey AtlasPair where
     liftIO $ IO.copyFile bseWarped bseOut
 
 
+  build out@(AtlasPair ThresholdedMasks caseidT caseid) = Just $ withTempDir $ \tmpdir -> do
+    let atlas = AtlasPair UnThresholdedMasks caseidT caseid
+    apply1 atlas :: Action [Double]
+    FSL.threshold 0.5 (last . paths $ atlas) (last . paths $ out)
+
+getAtlasSet caseidT thresholdedMasks = do
+    Just trainingCases <- fmap words <$> getConfig "trainingCases"
+    let atlases = [ AtlasPair thresholdedMasks caseidT caseid
+                  | caseid <- trainingCases ]
+    apply atlases :: Action [[Double]]
+    return atlases
+
+
+--------------------------------------------------------------------------------
+-- DwiMask
+
+
+data MaskingAlgorithm = NNLSFusion | MABS
+                      deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
+
+
+data DwiMask = DwiMask MaskingAlgorithm ThresholdedMasks CaseId
+             deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
+
+instance BuildKey DwiMask where
+  path x@(DwiMask _ _ caseid) = outdir </> caseid
+                                </> (intercalate "-" (words. show $ x)) <.> "nii.gz"
+
+  build out@(DwiMask MABS threshType caseid) = Just $ do
+    atlases <- getAtlasSet caseid threshType
+    FSL.average (path out) (map (last . paths) atlases)
+    FSL.threshold 0.5 (path out) (path out)
+
+  build out@(DwiMask NNLSFusion isThresholded caseid) = undefined
+
+
 main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
-  usingConfigFile "config/all.cfg"
+    usingConfigFile "config/config.cfg"
+    action $ do
+        need ["config/caselist.txt"]
+        caselist <- readFileLines "config/caselist.txt"
+        let masks = [DwiMask MABS thresh caseid
+                    | thresh <- [ThresholdedMasks, UnThresholdedMasks],
+                      caseid <- caselist]
+        apply masks :: Action [[Double]]
 
-  action $ do
-    -- Just caseids <- fmap words <$> getConfig "caselist"
-    -- Just targetCases <- fmap words <$> getConfig "targetCases"
-    Just trainingCases <- fmap words <$> getConfig "trainingCases"
-    need ["config/caselist.txt"]
-    cases <- readFileLines "config/caselist.txt"
-    apply [ AtlasPair caseidT caseid
-          | caseidT <- cases
-          , caseid <- trainingCases ] :: Action [[Double]]
-
-  rule $ (buildKey :: AtlasPair -> Maybe (Action [Double]))
-  rule $ (buildKey :: TrainingBse -> Maybe (Action [Double]))
-  rule $ (buildKey :: TrainingMask -> Maybe (Action [Double]))
+    rule $ (buildKey :: DwiMask -> Maybe (Action [Double]))
+    rule $ (buildKey :: AtlasPair -> Maybe (Action [Double]))
+    rule $ (buildKey :: TrainingBse -> Maybe (Action [Double]))
+    rule $ (buildKey :: TrainingMask -> Maybe (Action [Double]))
