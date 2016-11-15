@@ -111,7 +111,8 @@ getAtlasSet caseidT thresholdedMasks = do
 -- DwiMask
 
 
-data MaskingAlgorithm = NNLSFusion | MABS
+data MaskingAlgorithm = MABS
+                      | NNLSFusion Int
                       deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 
@@ -120,14 +121,28 @@ data DwiMask = DwiMask MaskingAlgorithm ThresholdedMasks CaseId
 
 instance BuildKey DwiMask where
   path x@(DwiMask _ _ caseid) = outdir </> caseid
-                                </> (intercalate "-" (words. show $ x)) <.> "nii.gz"
+                                </> (intercalate "-" (words. show $ x)) <.> "nrrd"
 
   build out@(DwiMask MABS threshType caseid) = Just $ do
     atlases <- getAtlasSet caseid threshType
     FSL.average (path out) (map (last . paths) atlases)
     FSL.threshold 0.5 (path out) (path out)
 
-  build out@(DwiMask NNLSFusion isThresholded caseid) = undefined
+  build out@(DwiMask (NNLSFusion radius) threshType caseid) = Just $
+    withTempFile $ \tmpfile -> do
+      atlases <- getAtlasSet caseid threshType
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let pre = tmpfile
+          nnlsOut = tmpfile ++ "_ncc.nii.gz"
+      command_ [] "nnlsFusion" ["-r", show radius
+                              ,"-F", path (TrainingBse caseid)
+                              ,"-A", map (head . path) atlases
+                              ,"-S", map (last . path) atlases
+                              ,"-O", pre
+                              ]
+      unit $ cmd "ConvertBetweenFileFormats" nnlsOut (path out)
+      unit $ cmd "center.py -i" (path out) "-o" (path out)
+
 
 
 main :: IO ()
@@ -137,8 +152,12 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
         need ["config/caselist.txt"]
         caselist <- readFileLines "config/caselist.txt"
         let masks = [DwiMask MABS thresh caseid
-                    | thresh <- [ThresholdedMasks, UnThresholdedMasks],
-                      caseid <- caselist]
+                    | thresh <- [ThresholdedMasks, UnThresholdedMasks]
+                    , caseid <- caselist]
+        let nnlsMasks = [DwiMask (NNLSFusion radius) thresh caseid
+                        | thresh <- [ThresholdedMasks, UnThresholdedMasks]
+                        , caseid <- caselist
+                        , radius <- [4,8]]
         apply masks :: Action [[Double]]
 
     rule $ (buildKey :: DwiMask -> Maybe (Action [Double]))
