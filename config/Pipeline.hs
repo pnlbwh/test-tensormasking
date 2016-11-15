@@ -28,8 +28,9 @@ instance BuildKey TrainingMask where
   path (TrainingMask caseid) = outdir </> caseid </> (caseid ++"-tensor-mask")
     <.> "nii.gz"
 
-  build out@(TrainingMask caseid) = Just $ withTempFile $ \tmpnrrd -> do
+  build out@(TrainingMask caseid) = Just $ withTempFile $ \tmpfile -> do
     let mask = Intrust.path "dwimask" caseid
+        tmpnrrd = tmpfile <.> "nrrd"
     need [mask]
     unit $ cmd "center.py -i" mask "-o" tmpnrrd
     toNii tmpnrrd (path out)
@@ -64,7 +65,7 @@ instance BuildKey AtlasPair where
         bseT = TrainingBse caseidT
     apply1 (TrainingMask caseid) :: Action [Double]
     apply [bse, bseT] :: Action [[Double]]
-    let pre = "bse_to_target"
+    let pre = tmpdir </> "bse_to_target"
         bseWarped = pre ++ "Warped.nii.gz"
     command_ [] (antsSrc </> "Scripts/antsRegistrationSyN.sh") ["-d", "3"
                                                               ,"-f", path bseT
@@ -86,7 +87,7 @@ instance BuildKey AtlasPair where
                                                     ,"-o", maskOut
                                                     ,"-r", path bseT
                                                     ,"-t", xfm]
-    liftIO $ IO.renameFile bseWarped bseOut
+    liftIO $ IO.copyFile bseWarped bseOut
 
 
 main :: IO ()
@@ -95,10 +96,12 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
 
   action $ do
     -- Just caseids <- fmap words <$> getConfig "caselist"
-    Just targetCases <- fmap words <$> getConfig "targetCases"
+    -- Just targetCases <- fmap words <$> getConfig "targetCases"
     Just trainingCases <- fmap words <$> getConfig "trainingCases"
+    need ["config/caselist.txt"]
+    cases <- readFileLines "config/caselist.txt"
     apply [ AtlasPair caseidT caseid
-          | caseidT <- targetCases
+          | caseidT <- cases
           , caseid <- trainingCases ] :: Action [[Double]]
 
   rule $ (buildKey :: AtlasPair -> Maybe (Action [Double]))
