@@ -193,8 +193,8 @@ threshold thresh nii niiOut =
 
 average :: FilePath -> [FilePath] -> Action ()
 average out niis =
-  command_ [] "fslmaths" $ [out, "-add"]
-  ++ (intersperse "-add" niis)
-  ++ ["-div", show (length niis)
-     ,"-odt", "short"
-     ,out]
+  command_ [] "fslmaths" $
+  (intersperse "-add" niis)
+   ++ ["-div", show (length niis)
+      ,out
+      ,"-odt", "short"]

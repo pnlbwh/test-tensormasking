@@ -9,6 +9,7 @@ import           qualified System.Directory         as IO
 import           AntsPath                 (antsPath, antsSrc)
 import qualified Intrust
 import qualified FSL (threshold, average)
+import qualified Nrrd
 
 
 type CaseId = String
@@ -110,7 +111,6 @@ getAtlasSet caseidT thresholdedMasks = do
 --------------------------------------------------------------------------------
 -- DwiMask
 
-
 data MaskingAlgorithm = MABS
                       | NNLSFusion Int
                       deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
@@ -125,8 +125,10 @@ instance BuildKey DwiMask where
 
   build out@(DwiMask MABS threshType caseid) = Just $ do
     atlases <- getAtlasSet caseid threshType
-    FSL.average (path out) (map (last . paths) atlases)
-    FSL.threshold 0.5 (path out) (path out)
+    let niiOut = replaceExtension (path out) "nii.gz"
+    FSL.average niiOut (map (last . paths) atlases)
+    FSL.threshold 0.5 niiOut niiOut
+    unit $ cmd "ConvertBetweenFileFormats" niiOut (path out)
 
   build out@(DwiMask (NNLSFusion radius) threshType caseid) = Just $
     withTempFile $ \tmpfile -> do
@@ -144,21 +146,30 @@ instance BuildKey DwiMask where
       unit $ cmd "center.py -i" (path out) "-o" (path out)
 
 
+--------------------------------------------------------------------------------
+-- Dice Coefficient
 
 main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
     usingConfigFile "config/config.cfg"
-    action $ do
+
+    want [outdir </> "dicecoefficients.csv"]
+
+    outdir </> "dicecoefficients.csv" %> \out -> do
         need ["config/caselist.txt"]
         caselist <- readFileLines "config/caselist.txt"
-        let masks = [DwiMask MABS thresh caseid
-                    | thresh <- [ThresholdedMasks, UnThresholdedMasks]
+        let masks = [DwiMask algo thresh caseid
+                    | algo <- [MABS, NNLSFusion 4, NNLSFusion 8]
+                    , thresh <- [ThresholdedMasks, UnThresholdedMasks]
                     , caseid <- caselist]
-        let nnlsMasks = [DwiMask (NNLSFusion radius) thresh caseid
-                        | thresh <- [ThresholdedMasks, UnThresholdedMasks]
-                        , caseid <- caselist
-                        , radius <- [4,8]]
+        let manualMasks = [TrainingMask caseid | caseid <- caselist]
         apply masks :: Action [[Double]]
+        apply manualMasks :: Action [[Double]]
+        let mkrow (m, mT) = do
+              coeff <- Nrrd.diceCoefficient (path m) (path mT)
+              return $ intercalate "," [show m, show coeff]
+        rows <- traverse mkrow $ zip masks manualMasks
+        writeFileLines out $ ["mask,coeff"] ++ rows
 
     rule $ (buildKey :: DwiMask -> Maybe (Action [Double]))
     rule $ (buildKey :: AtlasPair -> Maybe (Action [Double]))
