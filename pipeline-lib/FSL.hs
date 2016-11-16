@@ -24,6 +24,7 @@ module FSL
     ,dwiToNrrd
     ,threshold
     ,average
+    ,isNifti
     ) where
 
 import           Control.Monad
@@ -198,3 +199,6 @@ average out niis =
    ++ ["-div", show (length niis)
       ,out
       ,"-odt", "short"]
+
+isNifti :: FilePath -> Bool
+isNifti filename = takeExtensions filename == ".nii.gz"

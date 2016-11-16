@@ -10,6 +10,7 @@ import           AntsPath                 (antsPath, antsSrc)
 import qualified Intrust
 import qualified FSL (threshold, average)
 import qualified Nrrd
+import qualified Mask (diceCoefficient)
 
 
 type CaseId = String
@@ -130,12 +131,12 @@ instance BuildKey DwiMask where
   path x@(DwiMask _ _ caseid) = filter (/='"') $ outdir </> caseid
                                 </> (intercalate "-" (words . show $ x)) <.> "nrrd"
 
-  build out@(DwiMask MABS threshType caseid) = Just $ do
+  build out@(DwiMask MABS threshType caseid) = Just $ withTempDir $ \tmpdir -> do
     atlases <- getAtlasSet caseid threshType
-    let niiOut = replaceExtension (path out) "nii.gz"
-    FSL.average niiOut (map (last . paths) atlases)
-    FSL.threshold 0.5 niiOut niiOut
-    unit $ cmd "ConvertBetweenFileFormats" niiOut (path out)
+    let tmpnii = tmpdir </>  "t.nii.gz"
+    FSL.average tmpnii (map (last . paths) atlases)
+    FSL.threshold 0.5 tmpnii tmpnii
+    unit $ cmd "ConvertBetweenFileFormats" tmpnii (path out)
 
   build out@(DwiMask (NNLSFusion radius) threshType caseid) = Just $
     withTempFile $ \tmpfile -> do
@@ -147,7 +148,7 @@ instance BuildKey DwiMask where
           masks = map (last . paths)  atlases
       command_ [] "soft/nnlsFusion" $ ["-r", show radius
                                       ,"-F", path (TrainingBse caseid)
-                                      ,"-A"] ++ bses ++  
+                                      ,"-A"] ++ bses ++
                                       ["-S"] ++ masks ++
                                       ["-O", pre]
       unit $ cmd "ConvertBetweenFileFormats" nnlsOut (path out)
@@ -156,6 +157,24 @@ instance BuildKey DwiMask where
 
 --------------------------------------------------------------------------------
 -- Dice Coefficient
+
+data DiceCoeff = DiceCoeff MaskingAlgorithm ThresholdedMasks CaseId
+             deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
+
+showKey key = filter (/='"') $ intercalate "-" (words . show $ key)
+
+instance BuildKey DiceCoeff where
+  path x@(DiceCoeff _ _ caseid) = outdir
+                                  </> caseid
+                                  </> (showKey x) <.> "txt"
+
+  build out@(DiceCoeff algo thresh caseid) = Just $ do
+    let m = DwiMask algo thresh caseid
+    let mT = TrainingMask caseid
+    apply1 m :: Action [Double]
+    apply1 mT :: Action [Double]
+    coeff <- Mask.diceCoefficient (path m) (path mT)
+    writeFile' (path out) (show coeff)
 
 main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
@@ -166,19 +185,18 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
     outdir </> "dicecoefficients.csv" %> \out -> do
         need ["config/caselist.txt"]
         caselist <- readFileLines "config/caselist.txt"
-        let masks = [DwiMask algo thresh caseid
+        let coeffs = [DiceCoeff algo thresh caseid
                     | algo <- [MABS, NNLSFusion 4, NNLSFusion 8]
                     , thresh <- [ThresholdedMasks, UnThresholdedMasks]
                     , caseid <- caselist]
-        let manualMasks = [TrainingMask caseid | caseid <- caselist]
-        apply masks :: Action [[Double]]
-        apply manualMasks :: Action [[Double]]
-        let mkrow (m, mT) = do
-              coeff <- Nrrd.diceCoefficient (path m) (path mT)
-              return $ intercalate "," [show m, show coeff]
-        rows <- traverse mkrow $ zip masks manualMasks
+        apply coeffs :: Action [[Double]]
+        let mkrow coeff = do
+              value <- readFile' (path coeff)
+              return $ (showKey coeff) ++ "," ++  value
+        rows <- traverse mkrow $ coeffs
         writeFileLines out $ ["mask,coeff"] ++ rows
 
+    rule $ (buildKey :: DiceCoeff -> Maybe (Action [Double]))
     rule $ (buildKey :: DwiMask -> Maybe (Action [Double]))
     rule $ (buildKey :: AtlasPair -> Maybe (Action [Double]))
     rule $ (buildKey :: TrainingBse -> Maybe (Action [Double]))
