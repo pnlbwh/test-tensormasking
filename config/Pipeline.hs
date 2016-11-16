@@ -62,8 +62,12 @@ instance BuildKey AtlasPair where
     where
       atlasPath imgtype (AtlasPair thresholded caseidT caseid)
         = outdir </> caseidT
-        </> (intercalate "-" [show imgtype, show thresholded, caseid, "in", caseidT])
+        </> (intercalate "-" [show imgtype, thresh, caseid, "in", caseidT])
         <.> "nii.gz"
+        where
+         thresh = case imgtype of
+            Bse -> show UnThresholdedMasks
+            _ -> show thresholded
 
   build out@(AtlasPair UnThresholdedMasks caseidT caseid) = Just $ withTempDir $ \tmpdir -> do
     let bse = TrainingBse caseid
@@ -113,15 +117,18 @@ getAtlasSet caseidT thresholdedMasks = do
 
 data MaskingAlgorithm = MABS
                       | NNLSFusion Int
-                      deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
+                      deriving (Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
+instance Show MaskingAlgorithm where
+    show MABS = "MABS"
+    show (NNLSFusion x) = "NNLSFusionR" ++ show x
 
 data DwiMask = DwiMask MaskingAlgorithm ThresholdedMasks CaseId
              deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 instance BuildKey DwiMask where
-  path x@(DwiMask _ _ caseid) = outdir </> caseid
-                                </> (intercalate "-" (words. show $ x)) <.> "nrrd"
+  path x@(DwiMask _ _ caseid) = filter (/='"') $ outdir </> caseid
+                                </> (intercalate "-" (words . show $ x)) <.> "nrrd"
 
   build out@(DwiMask MABS threshType caseid) = Just $ do
     atlases <- getAtlasSet caseid threshType
@@ -136,12 +143,13 @@ instance BuildKey DwiMask where
       apply1 (TrainingBse caseid) :: Action [Double]
       let pre = tmpfile
           nnlsOut = tmpfile ++ "_ncc.nii.gz"
-      command_ [] "nnlsFusion" ["-r", show radius
-                              ,"-F", path (TrainingBse caseid)
-                              ,"-A", map (head . path) atlases
-                              ,"-S", map (last . path) atlases
-                              ,"-O", pre
-                              ]
+          bses = map (head . paths) atlases
+          masks = map (last . paths)  atlases
+      command_ [] "soft/nnlsFusion" $ ["-r", show radius
+                                      ,"-F", path (TrainingBse caseid)
+                                      ,"-A"] ++ bses ++  
+                                      ["-S"] ++ masks ++
+                                      ["-O", pre]
       unit $ cmd "ConvertBetweenFileFormats" nnlsOut (path out)
       unit $ cmd "center.py -i" (path out) "-o" (path out)
 
