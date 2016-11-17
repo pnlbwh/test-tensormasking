@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric  #-}
-import           Data.List                (intercalate)
+import           Data.List                (intercalate, intersperse)
 import           Development.Shake.Config
 import           OutputDirectory          (outdir)
 import           Shake.BuildKey
@@ -162,6 +162,7 @@ data DiceCoeff = DiceCoeff MaskingAlgorithm ThresholdedMasks CaseId
              deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 showKey key = filter (/='"') $ intercalate "-" (words . show $ key)
+showKeyButLast key = reverse . dropWhile (/='-') . reverse $ showKey key
 
 instance BuildKey DiceCoeff where
   path x@(DiceCoeff _ _ caseid) = outdir
@@ -192,9 +193,9 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
         apply coeffs :: Action [[Double]]
         let mkrow coeff = do
               value <- readFile' (path coeff)
-              return $ (showKey coeff) ++ "," ++  value
+              return $ concat . intersperse "," . tail $ (words . show $ coeff) ++ [value]
         rows <- traverse mkrow $ coeffs
-        writeFileLines out $ ["mask,coeff"] ++ rows
+        writeFileLines out $ ["algo,thresh,case,coeff"] ++ rows
 
     rule $ (buildKey :: DiceCoeff -> Maybe (Action [Double]))
     rule $ (buildKey :: DwiMask -> Maybe (Action [Double]))
