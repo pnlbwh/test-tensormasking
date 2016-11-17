@@ -181,7 +181,11 @@ main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
     usingConfigFile "config/config.cfg"
 
-    want [outdir </> "dicecoefficients.csv"]
+    want [outdir </> "summary.csv"]
+
+    outdir </> "summary.csv" %> \out -> do
+      need [outdir </> "dicecoefficients.csv", "config/summarize.R"]
+      cmd "config/summarize.R"
 
     outdir </> "dicecoefficients.csv" %> \out -> do
         need ["config/caselist.txt"]
