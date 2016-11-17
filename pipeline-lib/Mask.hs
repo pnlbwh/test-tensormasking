@@ -14,5 +14,5 @@ diceCoefficient mask1 mask2 = withTempDir $ \tmpdir -> do
   let tmpmask1 = tmpdir </> "mask1.nrrd"
   let tmpmask2 = tmpdir </> "mask2.nrrd"
   unit $ cmd "ConvertBetweenFileFormats" mask1 tmpmask1
-  unit $ cmd "ConvertBetweenFileFormats" mask1 tmpmask2
+  unit $ cmd "ConvertBetweenFileFormats" mask2 tmpmask2
   Nrrd.diceCoefficient tmpmask1 tmpmask2
