@@ -116,28 +116,38 @@ getAtlasSet caseidT thresholdedMasks = do
 --------------------------------------------------------------------------------
 -- DwiMask
 
-data MaskingAlgorithm = MABS
+data MaskingAlgorithm = MABS Float
                       | NNLSFusion Int
+                      | ImageMath Int
+                      | ImMV
+                      | ImStaple
+                      | ImAvg
+                      | DiPy
+                      | Combined
                       deriving (Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 instance Show MaskingAlgorithm where
-    show MABS = "MABS"
+    show (MABS x) = "MABS-thresh" ++ show x
     show (NNLSFusion x) = "NNLSFusionR" ++ show x
+    show (ImageMath x) = "ImageMathR" ++ show x
+    show ImMV = "ImMajorityVoting"
+    show ImStaple = "ImStaple"
+    show ImAvg = "ImAvg"
+    show DiPy = "DiPy"
+    show Combined = "Combined"
 
 data DwiMask = DwiMask MaskingAlgorithm ThresholdedMasks CaseId
              deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 instance BuildKey DwiMask where
   path x@(DwiMask _ _ caseid) = filter (/='"') $ outdir </> caseid
-                                </> (intercalate "-" (words . show $ x)) <.> "nrrd"
+                                </> (intercalate "-" (words . show $ x)) <.> "nii.gz"
 
-  build out@(DwiMask MABS threshType caseid) = Just $ withTempDir $ \tmpdir -> do
+  build out@(DwiMask (MABS thr) threshType caseid) = Just $ withTempDir $ \tmpdir -> do
     atlases <- getAtlasSet caseid threshType
     let tmpnii = tmpdir </>  "t.nii.gz"
     FSL.average tmpnii (map (last . paths) atlases)
-    FSL.threshold 0.5 tmpnii tmpnii
-    unit $ cmd "ConvertBetweenFileFormats" tmpnii (path out)
-
+    FSL.threshold thr tmpnii (path out)
   build out@(DwiMask (NNLSFusion radius) threshType caseid) = Just $
     withTempFile $ \tmpfile -> do
       atlases <- getAtlasSet caseid threshType
@@ -152,8 +162,47 @@ instance BuildKey DwiMask where
                                       ["-S"] ++ masks ++
                                       ["-O", pre]
       unit $ cmd "ConvertBetweenFileFormats" nnlsOut (path out)
-      unit $ cmd "center.py -i" (path out) "-o" (path out)
-
+      {-unit $ cmd "center.py -i" (path out) "-o" (path out)-}
+  build out@(DwiMask (ImageMath radius) threshType caseid) = Just $ do
+      atlases <- getAtlasSet caseid threshType
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let bses = map (head . paths) atlases
+          masks = map (last . paths)  atlases
+      unit $ cmd "ImageMath" "3" (path out) "CorrelationVoting" (path $ TrainingBse caseid) bses masks (show radius)
+  build out@(DwiMask ImMV threshType caseid) = Just $ do
+      atlases <- getAtlasSet caseid threshType
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let  masks = map (last . paths)  atlases
+      unit $ cmd "ImageMath" "3" (path out) "MajorityVoting" masks
+  build out@(DwiMask ImAvg threshType caseid) = Just $ do
+      atlases <- getAtlasSet caseid threshType
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let  masks = map (last . paths)  atlases
+      unit $ cmd "ImageMath" "3" (path out) "AverageLabels" masks
+  build out@(DwiMask ImStaple threshType caseid) = Just $ do
+      atlases <- getAtlasSet caseid threshType
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let  masks = map (last . paths)  atlases
+           tmpout = (dropExtensions $ path out) ++  "0001.nrrd"
+      unit $ cmd "ImageMath" "3" (path out) "STAPLE" masks
+      unit $ cmd "unu" ["2op", "gt", tmpout, "0.5", "-o", path out]
+      Nrrd.gzip (path out)
+      liftIO $ IO.removeFile tmpout
+  build out@(DwiMask DiPy threshType caseid) = Just $ do
+      apply1 (TrainingBse caseid) :: Action [Double]
+      unit $ cmd "config/dipy-mask.py" (path $ TrainingBse caseid) (path out <.> "nii.gz")
+      unit $ cmd "ConvertBetweenFileFormats" (path out <.> "nii.gz") (path out)
+      liftIO $ IO.removeFile (path out <.> "nii.gz")
+  build out@(DwiMask Combined thresh caseid) = Just $ do
+      apply1 (TrainingBse caseid) :: Action [Double]
+      let [m1,m2,m3] =  [DwiMask DiPy thresh caseid
+                        ,DwiMask (ImageMath 5) thresh caseid
+                        ,DwiMask (MABS 0.5) thresh caseid
+                        ]
+      apply [m1,m2,m3] :: Action [[Double]]
+      unit $ cmd "AverageImages" "3" (path out) "0" (path m1) (path m2) (path m3)
+      FSL.threshold 0.5 (path out) (path out)
+      {-unit $ cmd "unu" "2op" "gt" (path out) "0.5" "-o" (path out)-}
 
 --------------------------------------------------------------------------------
 -- Dice Coefficient
@@ -189,9 +238,15 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
 
     outdir </> "dicecoefficients.csv" %> \out -> do
         need ["config/caselist.txt"]
+        need ["config/Pipeline.hs"]
         caselist <- readFileLines "config/caselist.txt"
         let coeffs = [DiceCoeff algo thresh caseid
-                    | algo <- [MABS, NNLSFusion 4, NNLSFusion 8]
+                    | algo <- [ MABS 0.5, MABS 0.4, MABS 0.6
+                              , NNLSFusion 2, NNLSFusion 4, NNLSFusion 8
+                              , ImageMath 5, ImageMath 8, ImageMath 2, ImMV
+                              , ImStaple
+                              , DiPy
+                              , Combined ]
                     , thresh <- [ThresholdedMasks, UnThresholdedMasks]
                     , caseid <- caselist]
         apply coeffs :: Action [[Double]]
