@@ -155,8 +155,11 @@ instance BuildNode DiceCoeff where
   build n@(DiceCoeff k@(alg, caseid)) = Just $ do
     need $ DwiMask caseid
     need $ PredictedMask k
-    coeff <- Mask.diceCoefficient (path $ DwiMask caseid) (path $ PredictedMask k)
-    liftIO $ writeFile (path n) (show coeff)
+    -- coeff <- Mask.diceCoefficient (path $ DwiMask caseid) (path $ PredictedMask k)
+    unit $ cmd "ImageMath" "3" (path n) "DiceAndMinDistSum" (path $ DwiMask caseid) (path $ PredictedMask k)
+    coeff <- liftIO $ (last . words) <$> readFile (path n)
+    liftIO $ writeFile (path n) coeff
+    -- liftIO $ writeFile (path n) (show coeff)
 
 main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
