@@ -52,10 +52,10 @@ instance BuildNode Atlas where
     need (DwiMask caseidM)
     needs [B0 caseidM, B0 caseidF]
     let pre = tmpdir </> "bse_to_target"
-    command_ [] (antspath </> "Scripts/antsRegistrationSyN.sh") ["-d", "3"
-                                                                ,"-f", path (B0 caseidF)
-                                                                ,"-m", path (B0 caseidM)
-                                                                ,"-o", pre, "-n", "16"]
+    command_ [] (antspath </> "antsRegistrationSyN.sh") ["-d", "3"
+                                                        ,"-f", path (B0 caseidF)
+                                                        ,"-m", path (B0 caseidM)
+                                                        ,"-o", pre, "-n", "16"]
     command_ [] (antspath </> "antsApplyTransforms") ["-d", "3"
                                                      ,"-i", path (B0 caseidM)
                                                      ,"-o", head . paths $ n
@@ -133,7 +133,7 @@ instance BuildNode PredictedMask where
 
   build n@(PredictedMask (DiPy, caseid)) = Just $ do
       need (B0 caseid)
-      unit $ cmd "config/dipy-mask.py" (path $ B0 caseid) (path n <.> "nii.gz")
+      unit $ cmd "config/dipy-mask.py" (path $ B0 caseid) (path n)
 
   build n@(PredictedMask (Combined thr algs, caseid)) = Just $ do
       need (B0 caseid)
@@ -156,11 +156,11 @@ instance BuildNode DiceCoeff where
     need $ DwiMask caseid
     need $ PredictedMask k
     coeff <- Mask.diceCoefficient (path $ DwiMask caseid) (path $ PredictedMask k)
-    writeFile' (path n) (show coeff)
+    liftIO $ writeFile (path n) (show coeff)
 
 main :: IO ()
 main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
-    usingConfigFile "config/config.cfg"
+    usingConfigFile "config/settings.cfg"
 
     want [outdir </> "summary.csv"]
 
@@ -184,20 +184,22 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
                               , Combined 0.4 [MABS 0.5, DiPy, NNLSFusion 4]
                               , Combined 0.2 [MABS 0.5, DiPy, NNLSFusion 4]
                               , Combined 0.5 [MABS 0.5, DiPy, NNLSFusion 4, ImNeighborhoodCorrelation 5]
+                              , Combined 0.5 [MABS 0.5, DiPy, ImNeighborhoodCorrelation 5]
                               ]
                     , caseid <- caselist]
         needs coeffs
-        let mkrow coeff = do
-              value <- readFile' (path coeff)
-              return $ concat . intersperse "," . tail $ (words . show $ coeff) ++ [value]
-        rows <- traverse mkrow $ coeffs
-        writeFileLines out $ ["algo,thresh,case,coeff"] ++ rows
+        let mkrow n@(DiceCoeff (alg, caseid)) = do
+              dice <- readFile (path n)
+              return $ concat . intersperse "," $ ["\""++show alg++"\"","\""++caseid++"\"",dice]
+        rows <- liftIO $ traverse mkrow $ coeffs
+        writeFileLines out $ ["alg,case,coeff"] ++ rows
 
     rule $ (buildNode :: DiceCoeff -> Maybe (Action [Double]))
     rule $ (buildNode :: DwiMask -> Maybe (Action [Double]))
     rule $ (buildNode :: Atlas -> Maybe (Action [Double]))
     rule $ (buildNode :: B0 -> Maybe (Action [Double]))
     rule $ (buildNode :: PredictedMask -> Maybe (Action [Double]))
+    ANTs.rules
 
 
   -- build n@(PredictedMask ImStaple threshType caseid) = Just $ do
