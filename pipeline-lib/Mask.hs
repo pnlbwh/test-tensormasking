@@ -3,7 +3,7 @@ module Mask
     diceCoefficient
   ) where
 
-import qualified Nrrd (diceCoefficient)
+import qualified Teem (diceCoefficient)
 import Development.Shake
 import Development.Shake.FilePath
 import Development.Shake.Command
@@ -15,4 +15,4 @@ diceCoefficient mask1 mask2 = withTempDir $ \tmpdir -> do
   let tmpmask2 = tmpdir </> "mask2.nrrd"
   unit $ cmd "ConvertBetweenFileFormats" mask1 tmpmask1
   unit $ cmd "ConvertBetweenFileFormats" mask2 tmpmask2
-  Nrrd.diceCoefficient tmpmask1 tmpmask2
+  Teem.diceCoefficient tmpmask1 tmpmask2

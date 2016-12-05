@@ -3,15 +3,18 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
-module Shake.BuildKey
+module Shake.BuildNode
   (module Development.Shake
   ,module Development.Shake.Command
   ,module Development.Shake.FilePath
   ,module Development.Shake.Classes
   ,module Development.Shake.Rule
+  ,module Development.Shake.Config
   ,module GHC.Generics
-  ,BuildKey (..)
-  ,buildKey
+  ,BuildNode (..)
+  ,buildNode
+  ,need
+  ,needs
   ,GithubNode (..)
   ,GitHash
   ,buildGithubNode
@@ -21,7 +24,7 @@ module Shake.BuildKey
 import           Control.Monad              (unless, when)
 import           Data.Foldable              (traverse_)
 import           Data.Time                  (UTCTime (..), utctDayTime)
-import           Development.Shake
+import           Development.Shake hiding (need)
 import           Development.Shake.Classes
 import           Development.Shake.Command
 import           Development.Shake.Config
@@ -34,7 +37,6 @@ import           System.Directory           as IO
 import           Text.Printf
 import           System.Directory.PathWalk  (pathWalk)
 
-type CaseId = String
 type ShakeKey k  = (Generic k,Typeable k,Show k,Eq k,Hashable k,Binary k,NFData k)
 
 getModTime :: FilePath -> IO Double
@@ -42,12 +44,15 @@ getModTime = fmap utcToDouble . getModificationTime
   where
     utcToDouble = fromRational . toRational . utctDayTime
 
-class BuildKey a where
+class BuildNode a where
   paths :: a -> [FilePath]
   paths = (:[]) . path
 
   path :: a -> FilePath
   path = head . paths
+
+  pathDir :: a -> FilePath
+  pathDir = takeDirectory . path
 
   pathPrefix :: a -> FilePath
   pathPrefix = dropExtensions . path
@@ -55,15 +60,21 @@ class BuildKey a where
   build :: a -> Maybe (Action ())
   build _ = Nothing
 
-instance (ShakeKey k, BuildKey k) => Rule k [Double] where
+need :: (ShakeKey k, BuildNode k) => k -> Action [Double]
+need = apply1
+
+needs :: (ShakeKey k, BuildNode k) => [k] -> Action [[Double]]
+needs = apply
+
+instance (ShakeKey k, BuildNode k) => Rule k [Double] where
     storedValue _ q = do
         exists <- traverse IO.doesFileExist $ paths q
         if not (and exists) then return Nothing
         else fmap Just $ traverse getModTime $ paths q
     equalValue _ _ old new = if old == new then EqualCheap else NotEqual
 
-buildKey :: BuildKey a => a -> Maybe (Action [Double])
-buildKey k = case (build k) of
+buildNode :: BuildNode a => a -> Maybe (Action [Double])
+buildNode k = case (build k) of
   Nothing -> Just $ liftIO $ traverse getModTime $ paths k -- No action, source node
   (Just action) -> Just $ do
       liftIO $ traverse (createDirectoryIfMissing True) $ map takeDirectory . paths $ k

@@ -1,5 +1,5 @@
 module Shake
-  (module Shake.BuildKey
+  (module Shake.BuildNode
   ) where
 
-import Shake.BuildKey
+import Shake.BuildNode

@@ -1,0 +1,83 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
+module FreeSurfer
+(FreeSurfer.run
+,runWithMask
+) where
+
+import           Control.Monad            (when)
+import           Data.List                (intercalate)
+import           Data.List.Split
+import           Data.Maybe               (fromMaybe)
+import           FSL                      (isNifti)
+import qualified System.Directory         as IO (copyFile, doesFileExist,
+                                                 renameFile)
+import           System.Environment       (getEnvironment, lookupEnv)
+import           System.IO.Temp           (withSystemTempDirectory,
+                                           withSystemTempFile)
+import           System.Process           (CreateProcess (..), callProcess,
+                                           createProcess, proc)
+import           Util                     (convertImage, maskImage)
+import           Prelude hiding (FilePath, unwords, map)
+import Shelly
+import qualified Data.Text as T
+import Filesystem.Path (basename, dropExtensions)
+default (T.Text)
+
+
+type Version = T.Text
+
+getFreeSurferHome :: Version -> Sh FilePath
+getFreeSurferHome requiredVersion =
+  let showVersion = id
+      versionFromStamp =  T.tail . head . reverse . T.splitOn "-"
+      versionFile fshome = (fromText fshome) </> "build-stamp.txt"
+  in do
+    fshomeT <- get_env_text "FREESURFER_HOME"
+    when (T.null fshomeT) (error "Set FREESURFER_HOME")
+    whenM (not <$> test_f (versionFile fshomeT))
+      (terror $ T.unwords ["Can't check FreeSurfer version,"
+                        ,toTextIgnore $ versionFile fshomeT
+                        ,"doesn't exist. Is that directory correct?"])
+    -- version <- versionFromStamp <$> readfile $ versionFile fshomeT
+    version <- readfile $ versionFile fshomeT
+    when (version /= requiredVersion) $
+        terror . T.unwords $ ["FreeSurfer version "
+                           ,showVersion version
+                           ,"detected, but require"
+                           ,showVersion requiredVersion]
+    return . fromText $ fshomeT
+
+
+runCmd :: FilePath -> FilePath -> FilePath -> [FilePath] -> Sh ()
+runCmd fshome subjdir exe args = do
+  setenv "SUBJECTS_DIR" $ toTextIgnore subjdir
+  cmd (fshome </> "bin" </> exe) args
+
+run :: Version -> Bool -> FilePath -> FilePath -> Sh ()
+run version skullstrip t1 outdir = withTmpDir $ \tmpdir -> do
+  fshome <- getFreeSurferHome version
+  let t1nii = tmpdir </> "t1.nii.gz"
+      caseid = dropExtensions . basename $ t1
+      subjectsDir = tmpdir </> "subjects"
+      fsdir = subjectsDir </> caseid
+      t1mgz = tmpdir </> caseid </> "mri" </> "T1.mgz"
+      brainmaskmgz = tmpdir </> caseid </> "mri" </> "brainmask.mgz"
+  liftIO $ convertImage (toS t1) (toS t1nii)
+  runCmd fshome subjectsDir "recon-all" $ ["-s", caseid ,"-i", t1nii ,"-autorecon1"]
+    ++ (if skullstrip then [] else ["-noskullstrip"])
+  cp t1mgz brainmaskmgz
+  runCmd fshome subjectsDir
+    "recon-all" ["-autorecon2", "-subjid", caseid]
+  runCmd fshome subjectsDir
+    "recon-all" ["-autorecon3", "-subjid", caseid]
+  mv fsdir outdir
+
+runWithMask :: Version -> FilePath -> FilePath -> FilePath -> Sh ()
+runWithMask version mask t1 outdir = withTmpDir  $ \tmpdir -> do
+    let maskedt1 = tmpdir </> "maskedt1.nii.gz"
+    liftIO $ Util.maskImage (toS t1) (toS mask) (toS maskedt1)
+    FreeSurfer.run version False maskedt1 outdir
+
+toS = T.unpack . toTextIgnore

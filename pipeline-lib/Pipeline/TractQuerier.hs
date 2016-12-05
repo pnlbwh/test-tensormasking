@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric  #-}
-module Software.TractQuerier
+module Pipeline.TractQuerier
   (TractQuerier (..)
   ,rules
   )
@@ -11,8 +11,8 @@ import           Data.Foldable              (traverse_)
 import           Development.Shake
 import           Development.Shake.Command
 import           Development.Shake.FilePath
-import           Shake.BuildKey
-import qualified SoftwareOutputPaths        as OutPaths (tractQuerierDir)
+import qualified Paths                      (tractQuerierPrefix)
+import           Shake.BuildNode
 import qualified System.Directory           as IO
 import           System.Directory.PathWalk  (pathWalk)
 
@@ -25,7 +25,7 @@ instance GithubNode TractQuerier where
 
   githubAddress _ = "demianw/tract_querier.git"
 
-  cloneDir (TractQuerier hash) = OutPaths.tractQuerierDir hash
+  cloneDir (TractQuerier hash) = Paths.tractQuerierPrefix ++ "-" ++ hash
 
   buildRepo out@(TractQuerier hash) = Just $ do
     -- saves 70 MB of space
