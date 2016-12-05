@@ -103,7 +103,9 @@ instance BuildNode PredictedMask where
 
   build n@(PredictedMask ((MABS thr), caseid)) = Just $ do
     (_,masks) <- getAtlasPaths caseid
-    FSL.average (path n) masks
+    let avg out niis = command_ [] "fslmaths" $
+           (intersperse "-add" niis) ++ ["-div", show (length niis), out]
+    avg (path n) masks
     FSL.threshold thr (path n) (path n)
 
   build n@(PredictedMask ((NNLSFusion radius), caseid)) = Just $ withTempDir $ \tmpdir -> do
@@ -152,12 +154,13 @@ newtype DiceCoeff = DiceCoeff (Algorithm, CaseId)
 instance BuildNode DiceCoeff where
   path x@(DiceCoeff (_, caseid)) = outdir </> caseid </> (showKey x) <.> "txt"
 
-  build n@(DiceCoeff k@(alg, caseid)) = Just $ do
+  build n@(DiceCoeff k@(alg, caseid)) = Just $ withTempDir $ \tmpdir -> do
     need $ DwiMask caseid
     need $ PredictedMask k
     -- coeff <- Mask.diceCoefficient (path $ DwiMask caseid) (path $ PredictedMask k)
-    unit $ cmd "ImageMath" "3" (path n) "DiceAndMinDistSum" (path $ DwiMask caseid) (path $ PredictedMask k)
-    coeff <- liftIO $ (last . words) <$> readFile (path n)
+    let tmpf = tmpdir </> "dice.txt"
+    unit $ cmd "ImageMath" "3" tmpf "DiceAndMinDistSum" (path $ DwiMask caseid) (path $ PredictedMask k)
+    coeff <- liftIO $ (last . words) <$> readFile tmpf
     liftIO $ writeFile (path n) coeff
     -- liftIO $ writeFile (path n) (show coeff)
 
@@ -177,7 +180,7 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
         Shake.need ["config/Main.hs"]
         caselist <- readFileLines "config/caselist.txt"
         let coeffs = [DiceCoeff (alg, caseid)
-                    | alg <- [ MABS 0.4, MABS 0.5, MABS 0.6
+                    | alg <- [ MABS 0.4, MABS 0.5, MABS 0.6, MABS 0.2, MABS 0.9
                               , NNLSFusion 2, NNLSFusion 4, NNLSFusion 8
                               , ImNeighborhoodCorrelation 2
                               , ImNeighborhoodCorrelation 5

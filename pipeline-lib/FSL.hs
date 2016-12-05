@@ -194,7 +194,7 @@ tonii f = replaceExtension f "nii.gz"
 
 threshold :: Float -> FilePath -> FilePath -> Action ()
 threshold thresh nii niiOut =
-  command_ [] "fslmaths" [nii, "-thr", show thresh, niiOut]
+  command_ [] "fslmaths" [nii, "-thr", show thresh, "-bin", niiOut]
 
 average :: FilePath -> [FilePath] -> Action ()
 average out niis =
