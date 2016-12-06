@@ -98,14 +98,15 @@ data Algorithm = MABS Float
 newtype PredictedMask = PredictedMask (Algorithm, CaseId)
              deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
+fslavg out niis = command_ [] "fslmaths" $
+       (intersperse "-add" niis) ++ ["-div", show (length niis), out]
+
 instance BuildNode PredictedMask where
   path n@(PredictedMask (_, caseid)) = outdir </> caseid </> showKey n <.> "nii.gz"
 
   build n@(PredictedMask ((MABS thr), caseid)) = Just $ do
     (_,masks) <- getAtlasPaths caseid
-    let avg out niis = command_ [] "fslmaths" $
-           (intersperse "-add" niis) ++ ["-div", show (length niis), out]
-    avg (path n) masks
+    fslavg (path n) masks
     FSL.threshold thr (path n) (path n)
 
   build n@(PredictedMask ((NNLSFusion radius), caseid)) = Just $ withTempDir $ \tmpdir -> do
@@ -141,7 +142,8 @@ instance BuildNode PredictedMask where
       need (B0 caseid)
       let ms = map (\x -> PredictedMask (x, caseid)) algs
       needs ms
-      unit $ cmd "AverageImages" "3" (path n) "0" (map path ms)
+      {-unit $ cmd "AverageImages" "3" (path n) "0" (map path ms)-}
+      fslavg (path n) (map path ms)
       FSL.threshold thr (path n) (path n)
       {-unit $ cmd "unu" "2op" "gt" (path out) "0.5" "-o" (path out)-}
 
@@ -191,6 +193,10 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
                               , Combined 0.2 [MABS 0.5, DiPy, NNLSFusion 4]
                               , Combined 0.5 [MABS 0.5, DiPy, NNLSFusion 4, ImNeighborhoodCorrelation 5]
                               , Combined 0.5 [MABS 0.5, DiPy, ImNeighborhoodCorrelation 5]
+                              , Combined 0.5 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
+                              , Combined 0.6 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
+                              , Combined 0.7 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
+                              , Combined 0.2 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
                               ]
                     , caseid <- caselist]
         needs coeffs
