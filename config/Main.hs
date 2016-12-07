@@ -93,6 +93,7 @@ data Algorithm = MABS Float
                | ImAverage
                | DiPy
                | Combined Float [Algorithm]
+               | AntsJointFusion [String]
                deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 newtype PredictedMask = PredictedMask (Algorithm, CaseId)
@@ -100,6 +101,17 @@ newtype PredictedMask = PredictedMask (Algorithm, CaseId)
 
 fslavg out niis = command_ [] "fslmaths" $
        (intersperse "-add" niis) ++ ["-div", show (length niis), out]
+
+mi :: FilePath -> FilePath -> Action Float
+mi im1 im2 = do
+  Stdout result <- command [] "ImageMath" ["3", "dummy" ,"Mattes", im1, im2]
+  return . read $ result
+
+-- mabsFusion out target imgs masks = withTempDir $ \tmpdir -> do
+--   mis <- traverse (mi target) imgs
+--   let weights = undefined
+--   let weightedimgs = map (tmpdir </>) 
+
 
 instance BuildNode PredictedMask where
   path n@(PredictedMask (_, caseid)) = outdir </> caseid </> showKey n <.> "nii.gz"
@@ -146,6 +158,11 @@ instance BuildNode PredictedMask where
       fslavg (path n) (map path ms)
       FSL.threshold thr (path n) (path n)
       {-unit $ cmd "unu" "2op" "gt" (path out) "0.5" "-o" (path out)-}
+
+  build n@(PredictedMask (AntsJointFusion params, caseid)) = Just $ do
+      need (B0 caseid)
+      (imgs, masks) <- getAtlasPaths caseid
+      unit $ cmd "antsJointFusion" "-d" "3" params "-t" (path $ B0 caseid) "-g" imgs "-l" masks "-o" (path n)
 
 --------------------------------------------------------------------------------
 -- Dice Coefficient
@@ -197,6 +214,7 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
                               , Combined 0.6 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
                               , Combined 0.7 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
                               , Combined 0.2 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
+                              , AntsJointFusion []
                               ]
                     , caseid <- caselist]
         needs coeffs
