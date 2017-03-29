@@ -93,7 +93,8 @@ data Algorithm = MABS Float
                | ImAverage
                | DiPy
                | Combined Float [Algorithm]
-               | AntsJointFusion [String]
+               | AntsJointFusion
+               | AntsJF [(String,String)]
                deriving (Show,Generic,Typeable,Eq,Hashable,Binary,NFData,Read)
 
 newtype PredictedMask = PredictedMask (Algorithm, CaseId)
@@ -111,7 +112,6 @@ mi im1 im2 = do
 --   mis <- traverse (mi target) imgs
 --   let weights = undefined
 --   let weightedimgs = map (tmpdir </>) 
-
 
 instance BuildNode PredictedMask where
   path n@(PredictedMask (_, caseid)) = outdir </> caseid </> showKey n <.> "nii.gz"
@@ -132,24 +132,19 @@ instance BuildNode PredictedMask where
                                       ["-O", pre]
       -- unit $ cmd "ConvertBetweenFileFormats" (tmpfile++"_ncc.nii.gz") (path n)
       liftIO $ IO.copyFile (pre++"_ncc.nii.gz") (path n)
-
   build n@(PredictedMask ((ImNeighborhoodCorrelation radius), caseid)) = Just $ do
       (b0s,masks) <- getAtlasPaths caseid
       need (B0 caseid)
       unit $ cmd "ImageMath" "3" (path n) "CorrelationVoting" (path $ B0 caseid) b0s masks (show radius)
-
   build n@(PredictedMask (ImMajorityVoting, caseid)) = Just $ do
       (_,masks) <- getAtlasPaths caseid
       unit $ cmd "ImageMath" "3" (path n) "MajorityVoting" masks
-
   build n@(PredictedMask (ImAverage, caseid)) = Just $ do
       (_,masks) <- getAtlasPaths caseid
       unit $ cmd "ImageMath" "3" (path n) "AverageLabels" masks
-
   build n@(PredictedMask (DiPy, caseid)) = Just $ do
       need (B0 caseid)
       unit $ cmd "config/dipy-mask.py" (path $ B0 caseid) (path n)
-
   build n@(PredictedMask (Combined thr algs, caseid)) = Just $ do
       need (B0 caseid)
       let ms = map (\x -> PredictedMask (x, caseid)) algs
@@ -158,11 +153,24 @@ instance BuildNode PredictedMask where
       fslavg (path n) (map path ms)
       FSL.threshold thr (path n) (path n)
       {-unit $ cmd "unu" "2op" "gt" (path out) "0.5" "-o" (path out)-}
-
-  build n@(PredictedMask (AntsJointFusion params, caseid)) = Just $ do
+  build n@(PredictedMask (AntsJointFusion, caseid)) = Just $ do
       need (B0 caseid)
       (imgs, masks) <- getAtlasPaths caseid
-      unit $ cmd "antsJointFusion" "-d" "3" params "-t" (path $ B0 caseid) "-g" imgs "-l" masks "-o" (path n)
+      command_ [] "antsJointFusion" $ 
+          ["-d", "3"
+          ,"-t", (path $ B0 caseid)] 
+          ++ ["-g"] ++ (intersperse "-g" imgs) 
+          ++ ["-l"] ++ (intersperse "-l" masks)
+          ++ ["-o", (path n)]
+  build n@(PredictedMask (AntsJF params, caseid)) = Just $ do
+      need (B0 caseid)
+      (imgs, masks) <- getAtlasPaths caseid
+      let formatParams ps = concatMap (\(arg,val) -> ["--"++arg,val]) ps
+      command_ [] "antsJointFusion" $ ["-d", "3"
+          ,"-t", (path $ B0 caseid)
+          ,"-g"] ++ imgs ++
+          ["-l"] ++ masks ++
+          ["-o", (path n)] ++ (formatParams params)
 
 --------------------------------------------------------------------------------
 -- Dice Coefficient
@@ -214,8 +222,24 @@ main = shakeArgs shakeOptions{shakeFiles=outdir, shakeVerbosity=Chatty} $ do
                               , Combined 0.6 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
                               , Combined 0.7 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
                               , Combined 0.2 [MABS 0.6, NNLSFusion 2, ImNeighborhoodCorrelation 2]
-                              , AntsJointFusion []
-                              ]
+                              , Combined 0.7 [MABS 0.6, AntsJointFusion, DiPy]
+                              , Combined 0.7 [AntsJointFusion, DiPy]
+                              , Combined 0.5 [AntsJointFusion, DiPy]
+                              , AntsJointFusion
+                              ] ++ [AntsJF [("search-radius",sr)
+                                           ,("patch-radius", pr)
+                                           ,("patch-metric", metric)
+                                           ,("constrain-nonnegative", nonneg)
+                                           ,("alpha", alpha)
+                                           ,("beta", beta) ]
+                                           | sr <- ["3","5"]
+                                           , pr <- ["3","4"]
+                                           --, metric <- ["PC", "MSQ"]
+                                           , metric <- ["PC"]
+                                           , nonneg <- ["0"]
+                                           , alpha <- map show [0.1,0.2,0.4]
+                                           , beta <- map show [1.0,2.0,3.0]
+                                           ]
                     , caseid <- caselist]
         needs coeffs
         let mkrow n@(DiceCoeff (alg, caseid)) = do

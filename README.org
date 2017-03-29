@@ -1,0 +1,62 @@
+#+PROPERTY: header-args:R  :session *R* :colnames yes :exports results
+#+OPTIONS: h:2 toc:nil html-postamble:nil
+#+TITLE: Tensor Masking Experiments
+
+* Slicer DiffusionWeightedVolumeMasking + mrtrix3
+
+#+BEGIN_SRC R :results output silent :exports none
+  library(purrr)
+  library(stringr)
+  library(readr)
+  library(data.table)
+  options(digits=3)
+  txts = Sys.glob('pnlpipe/_data/*/Dice*txt')
+  re = "(^.*)-..._..._....*txt$"
+  alg = str_match(txts, re) %>% .[,2] %>% map_chr(basename)
+  dice = txts %>% map_dbl(. %>% read_file %>% str_trim %>% as.double)
+  dSlicer = data.table(dice=dice, alg=alg)
+#+END_SRC
+
+#+RESULTS:
+
+
+#+BEGIN_SRC R
+  dSlicer[,.(meanDice=mean(dice),sdDice=sd(dice),num=.N)]
+#+END_SRC
+
+#+RESULTS:
+|      mean |                 sd | num |
+|-----------+--------------------+-----|
+| 0.9570869 | 0.0492813352058737 |  20 |
+
+* AntsJointFusion Top 10
+#+BEGIN_SRC R :results output silent
+  txts = Sys.glob('_data/*/Dice*AntsJF*txt')
+  re = "(^.*),..._..._....*.txt$"
+  alg = str_match(txts, re) %>% .[,2] %>% map_chr(basename)
+  dice = txts %>% map_dbl(. %>% read_file %>% str_trim %>% as.double)
+  dAnts = data.table(dice=dice, alg=alg)
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC R :results value :exports results :colnames yes
+res = rbind(dSlicer, dAnts)[,.(meanDice=mean(dice), sdDice=sd(dice), num=.N),by=alg]
+setorder(res, -meanDice)
+setcolorder(res, c("meanDice","sdDice","num","alg"))
+res[! alg %like% "negative,0"] %>% head(n=10)
+#+END_SRC
+
+#+RESULTS:
+|          meanDice |              sdDice | num | alg                                                                                                                       |
+|-------------------+---------------------+-----+---------------------------------------------------------------------------------------------------------------------------|
+|         0.9720745 | 0.00468909283455885 |  10 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,3),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.4),(beta,3.0)) |
+|         0.9720437 |  0.0046473937271933 |  10 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,3),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.2),(beta,3.0)) |
+|         0.9720075 | 0.00463193912476789 |  10 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,3),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.4),(beta,2.0)) |
+|         0.9719999 | 0.00460174352102909 |  10 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,3),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.1),(beta,3.0)) |
+| 0.971962272727273 | 0.00510458409845325 |  11 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,4),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.2),(beta,3.0)) |
+| 0.971953727272727 | 0.00511674779700757 |  11 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,4),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.4),(beta,3.0)) |
+|           0.97194 | 0.00512409332467707 |  11 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,4),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.1),(beta,3.0)) |
+|         0.9719316 | 0.00458443652662642 |  10 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,3),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.2),(beta,2.0)) |
+| 0.971930454545455 | 0.00510439470189437 |  11 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,4),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.4),(beta,2.0)) |
+| 0.971894272727273 | 0.00510195913529125 |  11 | DiceCoeff_(AntsJF_((search-radius,5),(patch-radius,4),(patch-metric,PC),(constrain-nonnegative,1),(alpha,0.2),(beta,2.0)) |
